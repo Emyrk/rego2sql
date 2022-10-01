@@ -23,10 +23,13 @@ func (a String) Equal(not bool, other SQLType) (string, error) {
 		if typeEquals(b.VarType, a) {
 			return mathEquals(not, sqlQuote(a.Value), b.NameFunc(b.Path)), nil
 		}
+
+		if len(b.PathLeft) == 1 && b.PathLeft[0] == wildcard && typeEquals(b.VarType, Array{}) {
+			return mathEquals(not, sqlQuote(a.Value), fmt.Sprintf("ANY(%s)", b.NameFunc(b.PathLeft))), nil
+		}
 		return "", fmt.Errorf("cannot compare ref %T to %T", a, b.VarType)
 	case String:
 		return mathEquals(not, sqlQuote(a.Value), sqlQuote(b.Value)), nil
-
 	default:
 		return "", fmt.Errorf("cannot compare %T to %T", a, b)
 	}

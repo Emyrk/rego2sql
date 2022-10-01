@@ -130,16 +130,23 @@ func processTerm(cfg CompileConfig, t *ast.Term) (SQLType, error) {
 			switch e := elem.Value.(type) {
 			case ast.String:
 				ref.Path = append(ref.Path, string(e))
+			case ast.Var:
+				if e.IsWildcard() {
+					ref.Path = append(ref.Path, "_")
+				} else {
+					return nil, fmt.Errorf("non wildcard refs not supported")
+				}
 			default:
 				return nil, fmt.Errorf("ref element type %T not supported", e)
 			}
 		}
-		node := cfg.VariableTypes.PathNode(ref.Path)
+		node, left := cfg.VariableTypes.PathNode(ref.Path)
 		if node == nil {
 			return nil, fmt.Errorf("unknown variable type for %s", ref.Path)
 		}
 		ref.VarType = node.NodeSQLType
 		ref.NameFunc = node.ColumnName
+		ref.PathLeft = left
 
 		return ref, nil
 	case ast.String:

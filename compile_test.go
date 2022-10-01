@@ -92,7 +92,7 @@ func TestPartialQueries(t *testing.T) {
 		},
 		{
 			Name: "RefWithNumber",
-			// Query 0: "bob" = input.post.author.name; "bob" = input.post.list[0]
+			// Query 0: "bob" = input.post.authors.name; "bob" = input.post.list[0]
 			Rego: `
 			package example
 			allow {
@@ -103,9 +103,8 @@ func TestPartialQueries(t *testing.T) {
 			Input: map[string]interface{}{
 				"user": "bob",
 			},
-			// TODO: Convert vars to columns
-			ExpectedSQL: "input.post.author = 'bob",
-			Unknowns:    []string{"input.post.author", "input.post.list"},
+			ExpectedSQL: "authors->>name = 'bob AND list[0] = 'bob",
+			Unknowns:    []string{"input.post.authors", "input.post.list"},
 		},
 		{
 			Name: "Array",
@@ -128,8 +127,7 @@ func TestPartialQueries(t *testing.T) {
 			Input: map[string]interface{}{
 				"user": "bob",
 			},
-			// TODO: Convert vars to columns
-			ExpectedSQL: "input.post.author = 'bob' OR 'bob' = ANY(input.post.moderators)",
+			ExpectedSQL: "'bob' = author OR 'bob' = ANY(moderators)",
 			Unknowns:    []string{"input.post.author", "input.post.moderators"},
 		},
 		{

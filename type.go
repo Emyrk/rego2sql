@@ -2,6 +2,10 @@ package go_rego
 
 import "reflect"
 
+const (
+	wildcard = "_"
+)
+
 type RegoBase struct {
 	RegoString string
 }
@@ -37,6 +41,7 @@ type Ref struct {
 	// VarType is the type of the value being referenced
 	VarType  SQLType
 	NameFunc ColumnNameFunc
+	PathLeft []string
 
 	base RegoBase
 }

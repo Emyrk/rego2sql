@@ -53,7 +53,7 @@ func NewTree() *Tree {
 	}
 }
 
-func (t *Tree) PathNode(path []string) *Node {
+func (t *Tree) PathNode(path []string) (*Node, []string) {
 	return t.Root.PathNode(path)
 }
 
@@ -80,13 +80,13 @@ func (n *Node) AddChild(path []string, sqlType SQLType, nameFunc ColumnNameFunc)
 	next.AddChild(path[1:], sqlType, nameFunc)
 }
 
-func (t *Node) PathNode(path []string) *Node {
+func (t *Node) PathNode(path []string) (*Node, []string) {
 	if len(path) == 0 {
-		return t
+		return t, path
 	}
 	next := t.Children[path[0]]
 	if next == nil {
-		return t
+		return t, path
 	}
 	return next.PathNode(path[1:])
 }
