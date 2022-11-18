@@ -59,9 +59,17 @@ func (b binaryOp) SQLString(cfg *SQLGenerator) string {
 
 	terms := make([]string, 0, len(b.Terms))
 	for _, term := range b.Terms {
-		// Wrap everything in parens to be safe.
-		// TODO: Trim excess parens if already wrapped
-		terms = append(terms, fmt.Sprintf("(%s)", term.SQLString(cfg)))
+		termSql := term.SQLString(cfg)
+
+		switch term.(type) {
+		case boolean:
+		default:
+			// By default, wrap all terms in parens. This might be excessive
+			// but it is safe.
+			termSql = "(" + termSql + ")"
+		}
+
+		terms = append(terms, termSql)
 	}
 
 	return strings.Join(terms, " "+sqlOp+" ")

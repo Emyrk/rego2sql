@@ -41,7 +41,7 @@ func ConvertRegoAst(cfg ConvertConfig, partial *rego.PartialQueries) (sqlast.Boo
 
 		boolConverted, ok := converted.(sqlast.BooleanNode)
 		if !ok {
-			return nil, fmt.Errorf("query %s: not a boolean", q.String())
+			return nil, fmt.Errorf("query %s: not a boolean expression", q.String())
 		}
 
 		if i != 0 {
@@ -55,45 +55,70 @@ func ConvertRegoAst(cfg ConvertConfig, partial *rego.PartialQueries) (sqlast.Boo
 }
 
 func convertQuery(cfg ConvertConfig, q ast.Body) (sqlast.BooleanNode, error) {
+	var expressions []sqlast.BooleanNode
 	for _, e := range q {
-		_, err := convertExpression(cfg, e)
+		exp, err := convertExpression(cfg, e)
 		if err != nil {
 			return nil, fmt.Errorf("expression %s: %w", e.String(), err)
 		}
+
+		boolExp, ok := exp.(sqlast.BooleanNode)
+		if !ok {
+			return nil, fmt.Errorf("expression %s: not a boolean expression", q.String())
+		}
+
+		expressions = append(expressions, boolExp)
 	}
 
-	return nil, nil
+	return sqlast.And(sqlast.RegoSource(q.String()), expressions...), nil
 }
 
 func convertExpression(cfg ConvertConfig, e *ast.Expr) (sqlast.BooleanNode, error) {
-	if !e.IsCall() {
-		// We can only handle this if it is a single term.
-		if term, ok := e.Terms.(*ast.Term); ok {
-			ty, err := convertTerm(cfg, term)
-			if err != nil {
-				return nil, fmt.Errorf("convert term %s: %w", term.String(), err)
-			}
-
-			tyBool, ok := ty.(sqlast.BooleanNode)
-			if !ok {
-				return nil, fmt.Errorf("convert term %s is not a boolean: %w", term.String(), err)
-			}
-
-			return tyBool, nil
-		}
-		return nil, fmt.Errorf("not a call, not yet supported")
+	if e.IsCall() {
+		return convertCall(cfg, e.Terms.([]*ast.Term))
 	}
 
-	// If the expression is not a call, that means it is an operator.
-	op := e.Operator().String()
-	switch op {
-	case "neq", "eq", "equals":
-		args, err := convertTerms(cfg, e.Operands(), 2)
+	// If it's not a call, it is a single term
+	if term, ok := e.Terms.(*ast.Term); ok {
+		ty, err := convertTerm(cfg, term)
+		if err != nil {
+			return nil, fmt.Errorf("convert term %s: %w", term.String(), err)
+		}
+
+		tyBool, ok := ty.(sqlast.BooleanNode)
+		if !ok {
+			return nil, fmt.Errorf("convert term %s is not a boolean: %w", term.String(), err)
+		}
+
+		return tyBool, nil
+	}
+
+	return nil, fmt.Errorf("expression %s not supported", e.String())
+}
+
+// convertCall converts a function call to a SQL expression.
+func convertCall(cfg ConvertConfig, call ast.Call) (sqlast.Node, error) {
+	// Operator is the first term
+	op := call[0]
+	var args []*ast.Term
+	if len(call) > 1 {
+		args = call[1:]
+	}
+
+	opString := op.String()
+	switch op.String() {
+	case "neq", "eq", "equals", "equal":
+		args, err := convertTerms(cfg, args, 2)
 		if err != nil {
 			return nil, fmt.Errorf("arguments: %w", err)
 		}
 
-		return sqlast.Equality(op == "neq", args[0], args[1]), nil
+		not := false
+		if opString == "neq" || opString == "notequals" || opString == "notequal" {
+			not = true
+		}
+
+		return sqlast.Equality(not, args[0], args[1]), nil
 	//case "internal.member_2":
 
 	default:
@@ -106,7 +131,16 @@ func convertTerms(cfg ConvertConfig, terms []*ast.Term, expected int) ([]sqlast.
 		return nil, fmt.Errorf("expected %d terms, got %d", expected, len(terms))
 	}
 
-	return nil, nil
+	result := make([]sqlast.Node, 0, len(terms))
+	for _, t := range terms {
+		term, err := convertTerm(cfg, t)
+		if err != nil {
+			return nil, fmt.Errorf("term: %w", err)
+		}
+		result = append(result, term)
+	}
+
+	return result, nil
 }
 
 func convertTerm(cfg ConvertConfig, term *ast.Term) (sqlast.Node, error) {
@@ -165,6 +199,9 @@ func convertTerm(cfg ConvertConfig, term *ast.Term) (sqlast.Node, error) {
 			Value:    arr,
 			Location: term.Location,
 		})
+	case ast.Call:
+		// This is a function call
+		return convertCall(cfg, t)
 	default:
 		return nil, fmt.Errorf("%T not yet supported", t)
 	}

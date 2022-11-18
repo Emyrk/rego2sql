@@ -50,14 +50,14 @@ func (e equality) SQLString(cfg *SQLGenerator) string {
 func (e equality) EqualsSQLString(cfg *SQLGenerator, not bool, other Node) string {
 	// e.SQLString() will result in a boolean.
 	switch other.(type) {
-	case BooleanNode:
-		return fmt.Sprintf("(%s) %s (%s)",
+	case boolean:
+		return fmt.Sprintf("(%s) %s %s",
 			e.SQLString(cfg),
 			equalsOp(not),
 			other.SQLString(cfg),
 		)
-	case boolean:
-		return fmt.Sprintf("(%s) %s %s",
+	case BooleanNode:
+		return fmt.Sprintf("(%s) %s (%s)",
 			e.SQLString(cfg),
 			equalsOp(not),
 			other.SQLString(cfg),

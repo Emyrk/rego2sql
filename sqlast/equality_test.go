@@ -1,8 +1,10 @@
 package sqlast_test
 
 import (
-	"github.com/stretchr/testify/require"
 	"testing"
+
+	"github.com/Emyrk/go-rego/sqlast"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEquality(t *testing.T) {

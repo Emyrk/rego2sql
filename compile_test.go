@@ -19,7 +19,7 @@ func TestSomething(t *testing.T) {
 	}, &rego.PartialQueries{})
 }
 
-func TestPartialQueries(t *testing.T) {
+func TestPartialQueriesWithVariables(t *testing.T) {
 	cfg := CompileConfig{
 		VariableTypes: NewTree().
 			AddElement(strings.Split("input.post.deleted", "."), Boolean{}, StaticName("deleted")).
@@ -233,78 +233,57 @@ func TestPartialQueries(t *testing.T) {
 	}
 }
 
+// TestRegoQueriesNoVariables handles cases without variables. These should be
+// very simple and straight forward.
 func TestRegoQueries(t *testing.T) {
-	//cfg := CompileConfig{
-	//	VariableTypes: NewTree().
-	//		AddElement(strings.Split("input.post.deleted", "."), Boolean{}, StaticName("deleted")).
-	//		AddElement(strings.Split("input.post.author", "."), String{}, StaticName("author")).
-	//		AddElement(strings.Split("input.post.can", "."), String{}, StaticName("can")).
-	//		AddElement(strings.Split("input.post.authors", "."), Map{ValueType: String{}},
-	//			RegexColumnNameReplace(`input\.post\.authors\.(.*)`, "authors->$1")).
-	//		AddElement(strings.Split("input.post.posts", "."), Array{elemType: String{}}, StaticName("posts")).
-	//		AddElement(strings.Split("input.post.can_list", "."), Array{elemType: String{}}, StaticName("can_list")).
-	//		AddElement(strings.Split("input.post.list", "."), Array{elemType: String{}}, StaticName("list")).
-	//		AddElement(strings.Split("input.post.moderators", "."), Array{elemType: String{}}, StaticName("moderators")),
-	//}
-	//opts := ast.ParserOptions{AllFutureKeywords: true}
-
-	cfg := ConvertConfig{
-		ConvertVariable: func(rego ast.Ref) (sqlast.Node, error) {
-			return nil, fmt.Errorf("not implemented")
-		},
-	}
-
 	testCases := []struct {
-		Name        string
-		Queries     []string
-		ExpectedSQL string
-		ExpectError bool
+		Name                 string
+		Queries              []string
+		ExpectedSQL          string
+		ExpectError          bool
+		ExpectedSQLGenErrors int
+
+		OverrideCfg func(rego ast.Ref) (sqlast.Node, error)
 	}{
 		{
-			Name: "VeryComplexVariable",
-			Queries: []string{
-				`input.post.authors["bob"] = "admin"`,
-				`input.post.authors[_] = "admin"`,
-				`input.post.authors[_].Friends["bob"] = "admin"`,
-				`input.post.authors[_].Friends[_] = "admin"`,
-			},
-		},
-
-		{
-			Name: "Complex",
-			Queries: []string{
-				`input.object.org_owner != ""`,
-				`input.object.org_owner in {"a", "b", "c"}`,
-				`input.object.org_owner != ""`,
-				`"read" in input.object.acl_group_list.allUsers`,
-				`"read" in input.object.acl_user_list.me`,
-			},
-			ExpectedSQL: `(organization_id :: text != '' OR ` +
-				`organization_id :: text = ANY(ARRAY ['a','b','c']) OR ` +
-				`organization_id :: text != '' OR ` +
-				`group_acl->'allUsers' ? 'read' OR ` +
-				`user_acl->'me' ? 'read')`,
-			ExpectError: false,
-		},
-		{
-			Name: "SetDereference",
-			Queries: []string{
-				`"*" in input.object.acl_group_list["4d30d4a8-b87d-45ac-b0d4-51b2e68e7e75"]`,
-			},
-			ExpectedSQL: "group_acl->'4d30d4a8-b87d-45ac-b0d4-51b2e68e7e75' ? '*'",
-			ExpectError: false,
+			Name:        "Empty",
+			Queries:     []string{``},
+			ExpectedSQL: "true",
 		},
 		{
 			Name:        "True",
-			Queries:     []string{"true"},
+			Queries:     []string{`true`},
 			ExpectedSQL: "true",
-			ExpectError: false,
 		},
 		{
 			Name:        "False",
-			Queries:     []string{"false"},
+			Queries:     []string{`false`},
 			ExpectedSQL: "false",
-			ExpectError: false,
+		},
+		{
+			Name:        "MultipleBool",
+			Queries:     []string{"true", "false"},
+			ExpectedSQL: "true OR false",
+		},
+		{
+			Name: "Numbers",
+			Queries: []string{
+				"(1 != 2) = true",
+				"5 == 5",
+			},
+			ExpectedSQL: "((1 != 2) = true) OR (5 = 5)",
+		},
+		// Variables
+		{
+			// Always return a constant string for all variables.
+			Name: "V_Basic",
+			Queries: []string{
+				`input.x = "hello_world"`,
+			},
+			ExpectedSQL: "'only_var' = 'hello_world'",
+			OverrideCfg: func(rego ast.Ref) (sqlast.Node, error) {
+				return sqlast.String("only_var"), nil
+			},
 		},
 	}
 
@@ -314,21 +293,55 @@ func TestRegoQueries(t *testing.T) {
 			t.Parallel()
 			part := partialQueries(t, tc.Queries...)
 
-			for i, q := range part.Queries {
-				t.Logf("Query %d: %s", i, q.String())
+			cfg := ConvertConfig{
+				ConvertVariable: func(rego ast.Ref) (sqlast.Node, error) {
+					return nil, fmt.Errorf("not implemented")
+				},
 			}
-			for i, s := range part.Support {
-				t.Logf("Support %d: %s", i, s.String())
+			if tc.OverrideCfg != nil {
+				cfg.ConvertVariable = tc.OverrideCfg
 			}
 
-			sql, err := ConvertRegoAst(cfg, part)
-			if tc.ExpectError {
-				require.Error(t, err)
-			} else {
-				require.NoError(t, err, "compile")
-				require.Equal(t, tc.ExpectedSQL, sql, "sql match")
-			}
+			requireConvert(t, convertTestCase{
+				part:               part,
+				cfg:                cfg,
+				expectSQL:          tc.ExpectedSQL,
+				expectConvertError: tc.ExpectError,
+				expectSQLGenErrors: tc.ExpectedSQLGenErrors,
+			})
 		})
+	}
+}
+
+type convertTestCase struct {
+	part *rego.PartialQueries
+	cfg  ConvertConfig
+
+	expectConvertError bool
+	expectSQL          string
+	expectSQLGenErrors int
+}
+
+func requireConvert(t *testing.T, tc convertTestCase) {
+	t.Helper()
+
+	for i, q := range tc.part.Queries {
+		t.Logf("Query %d: %s", i, q.String())
+	}
+	for i, s := range tc.part.Support {
+		t.Logf("Support %d: %s", i, s.String())
+	}
+
+	sqlAst, err := ConvertRegoAst(tc.cfg, tc.part)
+	if tc.expectConvertError {
+		require.Error(t, err)
+	} else {
+		require.NoError(t, err, "compile")
+
+		gen := sqlast.NewSQLGenerator()
+		sqlString := sqlAst.SQLString(gen)
+		require.Equal(t, tc.expectSQL, sqlString, "sql match")
+		require.Equal(t, tc.expectSQLGenErrors, len(gen.Errors()), "sql gen errors")
 	}
 }
 

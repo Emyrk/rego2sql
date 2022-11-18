@@ -21,7 +21,7 @@ func Number(source RegoSource, v json.Number) Node {
 
 func (n number) SQLString(cfg *SQLGenerator) string {
 	// TODO: Verify that this is a valid number in sql
-	return "'" + n.Value.String() + "'"
+	return n.Value.String()
 }
 
 func (n number) EqualsSQLString(cfg *SQLGenerator, not bool, other Node) string {
