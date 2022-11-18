@@ -20,12 +20,12 @@ func mathEquals(not bool, a, b string) string {
 func (a String) Equal(not bool, other SQLType) (string, error) {
 	switch b := other.(type) {
 	case Ref:
-		if typeEquals(b.VarType, a) {
+		if typeEquals(a, b.VarType) {
 			return mathEquals(not, sqlQuote(a.Value), b.NameFunc(b.Path)), nil
 		}
 
 		if len(b.PathLeft) == 1 && b.PathLeft[0] == wildcard && typeEquals(b.VarType, Array{}) {
-			return mathEquals(not, sqlQuote(a.Value), fmt.Sprintf(a"ANY(%s)", b.NameFunc(b.PathLeft))), nil
+			return mathEquals(not, sqlQuote(a.Value), fmt.Sprintf("ANY(%s)", b.NameFunc(b.PathLeft))), nil
 		}
 		return "", fmt.Errorf("cannot compare ref %T to %T", a, b.VarType)
 	case String:

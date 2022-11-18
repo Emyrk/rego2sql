@@ -27,6 +27,8 @@ func CompileSQL(cfg CompileConfig, partial *rego.PartialQueries) (string, error)
 
 	var builder strings.Builder
 	for i, q := range partial.Queries {
+		x := q.String()
+		fmt.Println(x)
 		sql, err := processQuery(cfg, q)
 		if err != nil {
 			return "", fmt.Errorf("query %s: %w", q.String(), err)
