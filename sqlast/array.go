@@ -27,7 +27,7 @@ func (a array) ContainsSQL(cfg *SQLGenerator, other Node) (string, error) {
 	// TODO: Handle array.Contains(array). Must handle types correctly.
 	// 	Should implement as strict subset.
 
-	if reflect.TypeOf(a.MyType()) != reflect.TypeOf(other) {
+	if reflect.TypeOf(a.MyType().UseAs()) != reflect.TypeOf(other.UseAs()) {
 		cfg.AddError(fmt.Errorf("array contains %q: type mismatch (%T, %T)",
 			a.Source, a.MyType(), other))
 		return "ArrayContainsError", fmt.Errorf("array contains %q: type mismatch (%T, %T)",
@@ -48,7 +48,7 @@ func (a array) SQLString(cfg *SQLGenerator) string {
 		for _, v := range a.Value {
 			values = append(values, v.SQLString(cfg))
 		}
-		return fmt.Sprintf("ARRAY[%s]", strings.Join(values, ", "))
+		return fmt.Sprintf("ARRAY [%s]", strings.Join(values, ","))
 	}
 
 	cfg.AddError(fmt.Errorf("array %q: unsupported type %T", a.Source, a.MyType()))

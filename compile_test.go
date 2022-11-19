@@ -300,10 +300,42 @@ func TestRegoQueries(t *testing.T) {
 			// Always return a constant string for all variables.
 			Name: "GroupACL",
 			Queries: []string{
-				`"read" in input.object.acl_group_list[input.object.organization_id]`,
+				`"read" in input.object.acl_group_list[input.object.org_owner]`,
 			},
 			ExpectedSQL:       "group_acl->organization_id :: text ? 'read'",
 			VariableConverter: go_rego.DefaultVariableConverter(),
+		},
+		{
+			Name: "VarInArray",
+			Queries: []string{
+				`input.object.org_owner in {"a", "b", "c"}`,
+			},
+			ExpectedSQL:       "organization_id :: text = ANY(ARRAY ['a','b','c'])",
+			VariableConverter: go_rego.DefaultVariableConverter(),
+		},
+		{
+			Name: "Complex",
+			Queries: []string{
+				`input.object.org_owner != ""`,
+				`input.object.org_owner in {"a", "b", "c"}`,
+				`input.object.org_owner != ""`,
+				`"read" in input.object.acl_group_list.allUsers`,
+				`"read" in input.object.acl_user_list.me`,
+			},
+			ExpectedSQL: `(organization_id :: text != '' OR ` +
+				`organization_id :: text = ANY(ARRAY ['a','b','c']) OR ` +
+				`organization_id :: text != '' OR ` +
+				`group_acl->'allUsers' ? 'read' OR ` +
+				`user_acl->'me' ? 'read')`,
+			VariableConverter: go_rego.DefaultVariableConverter(),
+		},
+		{
+			Name: "NoACLs",
+			Queries: []string{
+				`"read" in input.object.acl_group_list[input.object.org_owner]`,
+			},
+			ExpectedSQL:       "false",
+			VariableConverter: go_rego.NoACLConverter(),
 		},
 	}
 

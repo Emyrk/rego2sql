@@ -45,5 +45,5 @@ func (e memberOf) SQLString(cfg *SQLGenerator) string {
 	}
 
 	cfg.AddError(fmt.Errorf("unsupported contains: %T contains %T", e.Haystack, e.Needle))
-	return "EqualityError"
+	return "MemberOfError"
 }

@@ -11,6 +11,9 @@ var _ sqlast.VariableMatcher = ACLGroupVar{}
 type ACLGroupVar struct {
 	StructSQL  string
 	StructPath []string
+	// DenyAll is helpful for when we don't care about ACL groups.
+	// We need to default to denying access.
+	DenyAll bool
 
 	// FieldReference handles referencing the subfields, which could be
 	// more variables. We pass one in as the global one might not be correctly
@@ -27,6 +30,10 @@ func ACLGroupMatcher(fieldRefernce sqlast.VariableMatcher, structSQL string, str
 }
 
 func (ACLGroupVar) UseAs() sqlast.Node { return ACLGroupVar{} }
+func (g *ACLGroupVar) Disable() *ACLGroupVar {
+	g.DenyAll = true
+	return g
+}
 
 func (g ACLGroupVar) ConvertVariable(rego ast.Ref) (sqlast.Node, bool) {
 	left, err := sqlast.RegoVarPath(g.StructPath, rego)
@@ -45,6 +52,7 @@ func (g ACLGroupVar) ConvertVariable(rego ast.Ref) (sqlast.Node, bool) {
 	}
 
 	aclGrp := ACLGroupVar{
+		DenyAll:        g.DenyAll,
 		StructSQL:      g.StructSQL,
 		StructPath:     g.StructPath,
 		FieldReference: g.FieldReference,
@@ -80,10 +88,17 @@ func (g ACLGroupVar) ConvertVariable(rego ast.Ref) (sqlast.Node, bool) {
 }
 
 func (g ACLGroupVar) SQLString(cfg *sqlast.SQLGenerator) string {
+	if g.DenyAll {
+		return "false"
+	}
 	return fmt.Sprintf("%s->%s", g.StructSQL, g.GroupNode.SQLString(cfg))
 }
 
 func (g ACLGroupVar) ContainsSQL(cfg *sqlast.SQLGenerator, other sqlast.Node) (string, error) {
+	if g.DenyAll {
+		return "false", nil
+	}
+
 	switch other.UseAs().(type) {
 	case sqlast.AstString:
 		return fmt.Sprintf("%s ? %s", g.SQLString(cfg), other.SQLString(cfg)), nil
