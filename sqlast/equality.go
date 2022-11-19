@@ -8,7 +8,9 @@ import (
 // support equality with other types. We defer to other types to implement this
 // as it is much easier to implement this in the context of the type.
 type SupportsEquality interface {
-	EqualsSQLString(cfg *SQLGenerator, not bool, other Node) string
+	// EqualsSQLString intentionally returns an error. This is so if
+	// left = right is not supported, we can try right = left.
+	EqualsSQLString(cfg *SQLGenerator, not bool, other Node) (string, error)
 }
 
 var _ BooleanNode = equality{}
@@ -32,40 +34,48 @@ func Equality(notEquals bool, a, b Node) BooleanNode {
 	}
 }
 
+func (equality) IsBooleanNode() {}
+func (equality) UseAs() Node    { return equality{} }
+
 func (e equality) SQLString(cfg *SQLGenerator) string {
 	// Equalities can be flipped without changing the result, so we can
 	// try both left = right and right = left.
 	if eq, ok := e.Left.(SupportsEquality); ok {
-		return eq.EqualsSQLString(cfg, e.Not, e.Right)
+		v, err := eq.EqualsSQLString(cfg, e.Not, e.Right)
+		if err == nil {
+			return v
+		}
 	}
 
 	if eq, ok := e.Right.(SupportsEquality); ok {
-		return eq.EqualsSQLString(cfg, e.Not, e.Left)
+		v, err := eq.EqualsSQLString(cfg, e.Not, e.Left)
+		if err == nil {
+			return v
+		}
 	}
 
 	cfg.AddError(fmt.Errorf("unsupported equality: %T %s %T", e.Left, equalsOp(e.Not), e.Right))
 	return "EqualityError"
 }
 
-func (e equality) EqualsSQLString(cfg *SQLGenerator, not bool, other Node) string {
-	// e.SQLString() will result in a boolean.
-	switch other.(type) {
-	case boolean:
+func (e equality) EqualsSQLString(cfg *SQLGenerator, not bool, other Node) (string, error) {
+	// e.SQLString() will result in a AstBoolean.
+	switch other.UseAs().(type) {
+	case AstBoolean:
 		return fmt.Sprintf("(%s) %s %s",
 			e.SQLString(cfg),
 			equalsOp(not),
 			other.SQLString(cfg),
-		)
+		), nil
 	case BooleanNode:
 		return fmt.Sprintf("(%s) %s (%s)",
 			e.SQLString(cfg),
 			equalsOp(not),
 			other.SQLString(cfg),
-		)
+		), nil
 	}
 
-	cfg.AddError(fmt.Errorf("unsupported equality: %T %s %T", e, equalsOp(not), other))
-	return "EqualityError"
+	return "", fmt.Errorf("unsupported equality: %T %s %T", e, equalsOp(not), other)
 }
 
 func equalsOp(not bool) string {

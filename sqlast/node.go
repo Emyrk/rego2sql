@@ -2,35 +2,25 @@ package sqlast
 
 type Node interface {
 	SQLString(cfg *SQLGenerator) string
+	// UseAs is a helper function to allow a node to be used as a different
+	// Node in operators. For example, a variable is really just a "string", so
+	// having the Equality operator check for "String" or "StringVar" is just
+	// excessive. Instead, we can just have the variable implement this function.
+	UseAs() Node
 }
 
-// BooleanNode is a node that returns a boolean value when evaluated.
+// BooleanNode is a node that returns a AstBoolean value when evaluated.
 type BooleanNode interface {
 	Node
+	IsBooleanNode()
 }
 
 type RegoSource string
 
 type invalidNode struct{}
 
+func (invalidNode) UseAs() Node { return invalidNode{} }
+
 func (i invalidNode) SQLString(cfg *SQLGenerator) string {
 	return "invalid_type"
 }
-
-// IsPrimitive is a nice helper function to cover the most common primitive
-// types.
-func IsPrimitive(v Node) bool {
-	switch v.(type) {
-	case number, astString, boolean, BooleanNode:
-		return true
-	}
-	return false
-}
-
-//func IsLiteral(v Node) bool {
-//	switch v.(type) {
-//	case number, astString, boolean:
-//		return true
-//	}
-//	return false
-//}

@@ -58,7 +58,7 @@ func TestEquality(t *testing.T) {
 			gen := sqlast.NewSQLGenerator()
 			found := tc.Equality.SQLString(gen)
 			if tc.ExpectedErrors > 0 {
-				require.Equal(t, tc.ExpectedErrors, len(gen.Errors()), "expected number of errors")
+				require.Equal(t, tc.ExpectedErrors, len(gen.Errors()), "expected AstNumber of errors")
 			} else {
 				require.Equal(t, tc.ExpectedSQL, found, "expected sql")
 			}

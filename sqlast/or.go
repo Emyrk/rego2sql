@@ -20,6 +20,9 @@ type binaryOp struct {
 	Terms []BooleanNode
 }
 
+func (binaryOp) UseAs() Node    { return binaryOp{} }
+func (binaryOp) IsBooleanNode() {}
+
 func Or(source RegoSource, terms ...BooleanNode) BooleanNode {
 	return newBinaryOp(source, binaryOpOR, terms...)
 }
@@ -61,8 +64,8 @@ func (b binaryOp) SQLString(cfg *SQLGenerator) string {
 	for _, term := range b.Terms {
 		termSql := term.SQLString(cfg)
 
-		switch term.(type) {
-		case boolean:
+		switch term.UseAs().(type) {
+		case AstBoolean:
 		default:
 			// By default, wrap all terms in parens. This might be excessive
 			// but it is safe.

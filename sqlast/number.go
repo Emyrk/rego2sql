@@ -5,7 +5,7 @@ import (
 	"fmt"
 )
 
-type number struct {
+type AstNumber struct {
 	Source RegoSource
 	// Value is intentionally vague as to if it's an integer or a float.
 	// This defers that decision to the user. Rego keeps all numbers in this
@@ -16,20 +16,21 @@ type number struct {
 }
 
 func Number(source RegoSource, v json.Number) Node {
-	return number{Value: v, Source: source}
+	return AstNumber{Value: v, Source: source}
 }
 
-func (n number) SQLString(cfg *SQLGenerator) string {
-	// TODO: Verify that this is a valid number in sql
+func (AstNumber) UseAs() Node { return AstNumber{} }
+
+func (n AstNumber) SQLString(cfg *SQLGenerator) string {
+	// TODO: Verify that this is a valid AstNumber in sql
 	return n.Value.String()
 }
 
-func (n number) EqualsSQLString(cfg *SQLGenerator, not bool, other Node) string {
-	switch other.(type) {
-	case number:
-		return basicSQLEquality(cfg, not, n, other)
+func (n AstNumber) EqualsSQLString(cfg *SQLGenerator, not bool, other Node) (string, error) {
+	switch other.UseAs().(type) {
+	case AstNumber:
+		return basicSQLEquality(cfg, not, n, other), nil
 	}
 
-	cfg.AddError(fmt.Errorf("unsupported equality: %T %s %T", n, equalsOp(not), other))
-	return "EqualityError"
+	return "", fmt.Errorf("unsupported equality: %T %s %T", n, equalsOp(not), other)
 }

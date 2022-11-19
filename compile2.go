@@ -11,10 +11,23 @@ import (
 )
 
 type ConvertConfig struct {
-	// ConvertVariable is called each time a var is encountered. A function must be
-	// returned that is a Node. The variable Node handles how to do its own
-	// SQL conversion.
-	ConvertVariable func(rego ast.Ref) (sqlast.Node, error)
+	// VariableConverter is called each time a var is encountered. This creates
+	// the SQL ast for the variable.
+	VariableConverter sqlast.VariableMatcher
+}
+
+func DefaultVariableConverter() *sqlast.VariableConverter {
+	matcher := sqlast.NewVariableConverter().RegisterMatcher(
+		// Basic strings
+		sqlast.StringVarMatcher("organization_id :: text", []string{"input", "object", "organization_id"}),
+		sqlast.StringVarMatcher("owner_id :: text", []string{"input", "object", "owner"}),
+	)
+	matcher.RegisterMatcher(
+		ACLGroupMatcher(matcher, "group_acl", []string{"input", "object", "acl_group_list"}),
+		ACLGroupMatcher(matcher, "user_acl", []string{"input", "object", "acl_user_list"}),
+	)
+
+	return matcher
 }
 
 func ConvertRegoAst(cfg ConvertConfig, partial *rego.PartialQueries) (sqlast.BooleanNode, error) {
@@ -62,12 +75,7 @@ func convertQuery(cfg ConvertConfig, q ast.Body) (sqlast.BooleanNode, error) {
 			return nil, fmt.Errorf("expression %s: %w", e.String(), err)
 		}
 
-		boolExp, ok := exp.(sqlast.BooleanNode)
-		if !ok {
-			return nil, fmt.Errorf("expression %s: not a boolean expression", q.String())
-		}
-
-		expressions = append(expressions, boolExp)
+		expressions = append(expressions, exp)
 	}
 
 	return sqlast.And(sqlast.RegoSource(q.String()), expressions...), nil
@@ -75,7 +83,16 @@ func convertQuery(cfg ConvertConfig, q ast.Body) (sqlast.BooleanNode, error) {
 
 func convertExpression(cfg ConvertConfig, e *ast.Expr) (sqlast.BooleanNode, error) {
 	if e.IsCall() {
-		return convertCall(cfg, e.Terms.([]*ast.Term))
+		n, err := convertCall(cfg, e.Terms.([]*ast.Term))
+		if err != nil {
+			return nil, fmt.Errorf("call: %w", err)
+		}
+
+		boolN, ok := n.(sqlast.BooleanNode)
+		if !ok {
+			return nil, fmt.Errorf("call %q: not a boolean expression", e.String())
+		}
+		return boolN, nil
 	}
 
 	// If it's not a call, it is a single term
@@ -119,8 +136,13 @@ func convertCall(cfg ConvertConfig, call ast.Call) (sqlast.Node, error) {
 		}
 
 		return sqlast.Equality(not, args[0], args[1]), nil
-	//case "internal.member_2":
+	case "internal.member_2":
+		args, err := convertTerms(cfg, args, 2)
+		if err != nil {
+			return nil, fmt.Errorf("arguments: %w", err)
+		}
 
+		return sqlast.MemberOf(args[0], args[1]), nil
 	default:
 		return nil, fmt.Errorf("operator %s not supported", op)
 	}
@@ -155,12 +177,9 @@ func convertTerm(cfg ConvertConfig, term *ast.Term) (sqlast.Node, error) {
 			return nil, fmt.Errorf("empty ref not supported")
 		}
 
-		first, ok := t[0].Value.(ast.Var)
-		if !ok {
-			return nil, fmt.Errorf("ref must start with a var, got %T", t[0])
+		if cfg.VariableConverter == nil {
+			return nil, fmt.Errorf("no variable converter provided to handle variables")
 		}
-
-		var _ = first
 
 		// The structure of references is as follows:
 		// 1. All variables start with a regoAst.Var as the first term.
@@ -169,11 +188,11 @@ func convertTerm(cfg ConvertConfig, term *ast.Term) (sqlast.Node, error) {
 		//	- regoAst.Var if the field reference is a variable itself. Such as
 		//    the wildcard "[_]"
 		// 3. Repeat 1-2 until the end of the reference.
-		node, err := cfg.ConvertVariable(t)
-		if err != nil {
-			return nil, fmt.Errorf("variable %s: %w", t.String(), err)
+		node, ok := cfg.VariableConverter.ConvertVariable(t)
+		if !ok {
+			return nil, fmt.Errorf("variable %q cannot be converted", t.String())
 		}
-		return node, err
+		return node, nil
 	case ast.String:
 		return sqlast.String(string(t)), nil
 	case ast.Number:

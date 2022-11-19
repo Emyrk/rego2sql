@@ -21,25 +21,28 @@ func Array(source RegoSource, nodes ...Node) (Node, error) {
 	return array{Value: nodes, Source: source}, nil
 }
 
-func (a array) ContainsSQL(cfg *SQLGenerator, other Node) string {
+func (array) UseAs() Node { return array{} }
+
+func (a array) ContainsSQL(cfg *SQLGenerator, other Node) (string, error) {
 	// TODO: Handle array.Contains(array). Must handle types correctly.
-	// Should implement as strict subset.
+	// 	Should implement as strict subset.
 
 	if reflect.TypeOf(a.MyType()) != reflect.TypeOf(other) {
 		cfg.AddError(fmt.Errorf("array contains %q: type mismatch (%T, %T)",
 			a.Source, a.MyType(), other))
-		return "ArrayContainsError"
+		return "ArrayContainsError", fmt.Errorf("array contains %q: type mismatch (%T, %T)",
+			a.Source, a.MyType(), other)
 	}
 
-	return fmt.Sprintf("%s = ANY(%s)", other.SQLString(cfg), a.SQLString(cfg))
+	return fmt.Sprintf("%s = ANY(%s)", other.SQLString(cfg), a.SQLString(cfg)), nil
 }
 
 func (a array) SQLString(cfg *SQLGenerator) string {
-	switch a.MyType().(type) {
+	switch a.MyType().UseAs().(type) {
 	case invalidNode:
 		cfg.AddError(fmt.Errorf("array %q: empty array", a.Source))
 		return "ArrayError"
-	case number, astString, boolean:
+	case AstNumber, AstString, AstBoolean:
 		// Primitive types
 		values := make([]string, 0, len(a.Value))
 		for _, v := range a.Value {
