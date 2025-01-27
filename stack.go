@@ -7,7 +7,7 @@ import (
 
 type Item struct {
 	Node   *pg_query.Node
-	Type   cty.Type
+	Value  cty.Value
 	Source string
 }
 

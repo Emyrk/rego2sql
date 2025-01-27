@@ -70,14 +70,14 @@ func RegoVarPath(path []string, terms []*ast.Term) ([]*ast.Term, error) {
 type astStringVar struct {
 	FieldPath    []string
 	ColumnString []string
-	Typ          cty.Type
+	Value        cty.Value
 }
 
-func StringVarMatcher(regoPath []string, columnRef []string, typ cty.Type) VariableMatcher {
+func StringVarMatcher(regoPath []string, columnRef []string, val cty.Value) VariableMatcher {
 	return astStringVar{
 		FieldPath:    regoPath,
 		ColumnString: columnRef,
-		Typ:          typ,
+		Value:        val,
 	}
 }
 
@@ -92,8 +92,8 @@ func (s astStringVar) ConvertVariable(rego ast.Ref) (*Item, bool) {
 		}
 
 		return &Item{
-			Node: pg_query.MakeColumnRefNode(fields, 0),
-			Type: s.Typ,
+			Node:  pg_query.MakeColumnRefNode(fields, 0),
+			Value: s.Value,
 		}, true
 	}
 

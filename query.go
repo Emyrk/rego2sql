@@ -64,8 +64,8 @@ func (c *converter) convertQuery(cfg ConvertConfig, q ast.Body) (*pg_query.Node,
 	nodes := make([]*pg_query.Node, 0, c.stack.Len())
 	for !c.stack.IsEmpty() {
 		sn := c.stack.Pop()
-		if sn.Type != cty.Bool {
-			return nil, fmt.Errorf("expected boolean type, got %s for rego %q", sn.Type, sn.Source)
+		if sn.Value.Type() != cty.Bool {
+			return nil, fmt.Errorf("expected boolean type, got %s for rego %q", sn.Value, sn.Source)
 		}
 		nodes = append(nodes, sn.Node)
 	}
@@ -95,7 +95,7 @@ func convertCall(cfg ConvertConfig, call ast.Call) (*Item, error) {
 			return nil, fmt.Errorf("arguments: %w", err)
 		}
 
-		if !termArgs[0].Type.Equals(termArgs[1].Type) {
+		if !termArgs[0].Value.Type().Equals(termArgs[1].Value.Type()) {
 			return nil, fmt.Errorf("arguments are not the same type for equality: %q",
 				call.String())
 		}
@@ -110,7 +110,7 @@ func convertCall(cfg ConvertConfig, call ast.Call) (*Item, error) {
 				[]*pg_query.Node{pg_query.MakeStrNode(sqlOp)},
 				termArgs[0].Node, termArgs[1].Node, 0,
 			),
-			Type:   cty.Bool,
+			Value:  cty.UnknownVal(cty.Bool),
 			Source: call.String(),
 		}, nil
 	case "internal.member_2":
@@ -119,13 +119,27 @@ func convertCall(cfg ConvertConfig, call ast.Call) (*Item, error) {
 			return nil, fmt.Errorf("arguments: %w", err)
 		}
 
-		if termArgs[1].Type.IsListType() {
+		if termArgs[1].Value.Type().IsListType() {
+			// TODO: Probably handle more json types better. This is hard coded
+			// for how we do it in coder.
+			if IsJSONBool(termArgs[1].Value) {
+				// Use '?' operator for JSONB
+				return &Item{
+					Node: pg_query.MakeAExprNode(pg_query.A_Expr_Kind_AEXPR_OP,
+						[]*pg_query.Node{pg_query.MakeStrNode("?")},
+						termArgs[1].Node, termArgs[0].Node, 0,
+					),
+					Value:  cty.UnknownVal(cty.Bool),
+					Source: call.String(),
+				}, nil
+			}
+
 			return &Item{
 				Node: pg_query.MakeAExprNode(pg_query.A_Expr_Kind_AEXPR_OP_ANY,
 					[]*pg_query.Node{pg_query.MakeStrNode("=")},
 					termArgs[0].Node, termArgs[1].Node, 0,
 				),
-				Type:   cty.Bool,
+				Value:  cty.UnknownVal(cty.Bool),
 				Source: call.String(),
 			}, nil
 		}
@@ -167,37 +181,38 @@ func convertTerm(cfg ConvertConfig, term *ast.Term) (*Item, error) {
 	case ast.String:
 		return &Item{
 			Node:   pg_query.MakeAConstStrNode(string(val), 0),
-			Type:   cty.String,
+			Value:  cty.StringVal(string(val)),
 			Source: val.String(),
 		}, nil
 	case ast.Number:
 		i, iOk := val.Int64()
-		_, fOk := val.Float64()
+		f, fOk := val.Float64()
 		if !iOk && !fOk {
 			return nil, fmt.Errorf("convert to integer: %q", source)
 		}
 		if iOk {
 			return &Item{
 				Node:   pg_query.MakeAConstIntNode(i, 0),
-				Type:   cty.Number,
+				Value:  cty.NumberIntVal(i),
 				Source: val.String(),
 			}, nil
 		}
 
 		return &Item{
 			Node:   constFloat(val.String(), 0),
-			Type:   cty.Number,
+			Value:  cty.NumberFloatVal(f),
 			Source: val.String(),
 		}, nil
 	case ast.Boolean:
 		return &Item{
 			Node:   constBoolean(bool(val), 0),
-			Type:   cty.Bool,
+			Value:  cty.BoolVal(bool(val)),
 			Source: val.String(),
 		}, nil
 	case *ast.Array:
 		arrayType := cty.NilType
 
+		ctyList := make([]cty.Value, 0, val.Len())
 		elemNodes := make([]*pg_query.Node, 0, val.Len())
 		elems := make([]*Item, 0, val.Len())
 		for i := 0; i < val.Len(); i++ {
@@ -206,14 +221,15 @@ func convertTerm(cfg ConvertConfig, term *ast.Term) (*Item, error) {
 				return nil, fmt.Errorf("array element %d in %q: %w", i, val.String(), err)
 			}
 			if i == 0 {
-				arrayType = value.Type
+				arrayType = value.Value.Type()
 			} else {
-				if !value.Type.Equals(arrayType) {
+				if !value.Value.Type().Equals(arrayType) {
 					return nil, fmt.Errorf("array of mixed types, this is unsupported: %q", val.String())
 				}
 			}
 			elems = append(elems, value)
 			elemNodes = append(elemNodes, value.Node)
+			ctyList = append(ctyList, value.Value)
 		}
 
 		return &Item{
@@ -225,7 +241,7 @@ func convertTerm(cfg ConvertConfig, term *ast.Term) (*Item, error) {
 					},
 				},
 			},
-			Type:   cty.List(arrayType),
+			Value:  cty.ListVal(ctyList),
 			Source: val.String(),
 		}, nil
 	case ast.Object:

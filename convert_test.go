@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/Emyrk/rego2sql"
+	"github.com/Emyrk/rego2sql/codercfg"
 	"github.com/open-policy-agent/opa/ast"
 	"github.com/open-policy-agent/opa/rego"
 	pg_query "github.com/pganalyze/pg_query_go/v6"
@@ -14,7 +15,8 @@ import (
 )
 
 func TestEx(t *testing.T) {
-	tree, err := pg_query.Parse("SELECT * WHERE 1 = ANY(ARRAY[1,2,3])")
+	//tree, err := pg_query.Parse("SELECT * WHERE 1 = ANY(ARRAY[1,2,3])")
+	tree, err := pg_query.Parse("SELECT * WHERE group_acl->'organization_id' ? 'read'")
 	require.NoError(t, err)
 
 	where := tree.GetStmts()[0].GetStmt()
@@ -29,13 +31,24 @@ func TestRegoQueries(t *testing.T) {
 		matcher := rego2sql.NewVariableConverter().RegisterMatcher(
 			// Basic strings
 			// "organization_id :: text"
-			rego2sql.StringVarMatcher([]string{"input", "object", "org_owner"}, []string{"organization_id"}, cty.String),
-			rego2sql.StringVarMatcher([]string{"input", "object", "owner"}, []string{"owner"}, cty.String),
+			rego2sql.StringVarMatcher([]string{"input", "object", "org_owner"}, []string{"organization_id"}, cty.UnknownVal(cty.String)),
+			rego2sql.StringVarMatcher([]string{"input", "object", "owner"}, []string{"owner"}, cty.UnknownVal(cty.String)),
 		)
-		//aclGroups := aclGroupMatchers(matcher)
-		//for i := range aclGroups {
-		//	matcher.RegisterMatcher(aclGroups[i])
-		//}
+		matcher.RegisterMatcher(
+			codercfg.GroupACLMatcher(matcher),
+			codercfg.UserACLMatcher(matcher),
+		)
+
+		return matcher
+	}
+
+	noACLs := func() *rego2sql.VariableConverter {
+		matcher := rego2sql.NewVariableConverter().RegisterMatcher(
+			// Basic strings
+			// "organization_id :: text"
+			rego2sql.StringVarMatcher([]string{"input", "object", "org_owner"}, []string{"organization_id"}, cty.UnknownVal(cty.String)),
+			rego2sql.StringVarMatcher([]string{"input", "object", "owner"}, []string{"owner"}, cty.UnknownVal(cty.String)),
+		)
 
 		return matcher
 	}
@@ -48,6 +61,7 @@ func TestRegoQueries(t *testing.T) {
 		ExpectedSQLGenErrors int
 
 		VariableConverter rego2sql.VariableMatcher
+		UnknownVarsFalse  bool
 	}{
 		{
 			Name:        "Empty",
@@ -57,22 +71,22 @@ func TestRegoQueries(t *testing.T) {
 		{
 			Name:        "True",
 			Queries:     []string{`true`},
-			ExpectedSQL: "true",
+			ExpectedSQL: "(true)",
 		},
 		{
 			Name:        "False",
 			Queries:     []string{`false`},
-			ExpectedSQL: "false",
+			ExpectedSQL: "(false)",
 		},
 		{
 			Name:        "BoolOps",
 			Queries:     []string{"5 = 5"},
-			ExpectedSQL: "5 = 5",
+			ExpectedSQL: "(5 = 5)",
 		},
 		{
 			Name:        "MultipleBool",
 			Queries:     []string{"true", "false"},
-			ExpectedSQL: "true OR false",
+			ExpectedSQL: "(true) OR (false)",
 		},
 		{
 			Name: "Numbers",
@@ -80,7 +94,7 @@ func TestRegoQueries(t *testing.T) {
 				"(1 != 2) = true",
 				"5 == 5",
 			},
-			ExpectedSQL: "(1 <> 2) = true OR 5 = 5",
+			ExpectedSQL: "((1 <> 2) = true) OR (5 = 5)",
 		},
 		// Variables
 		{
@@ -89,21 +103,21 @@ func TestRegoQueries(t *testing.T) {
 			Queries: []string{
 				`input.x = "hello_world"`,
 			},
-			ExpectedSQL: "col_ref = 'hello_world'",
+			ExpectedSQL: "(col_ref = 'hello_world')",
 			VariableConverter: rego2sql.NewVariableConverter().RegisterMatcher(
 				rego2sql.StringVarMatcher([]string{"input", "x"}, []string{
 					"col_ref",
-				}, cty.String),
+				}, cty.UnknownVal(cty.String)),
 			),
 		},
 		// Coder Variables
 		{
 			// Always return a constant string for all variables.
-			Name: "GroupACL",
+			Name: "GroupACLConstant",
 			Queries: []string{
 				`"read" in input.object.acl_group_list.allUsers`,
 			},
-			ExpectedSQL:       "group_acl->'allUsers' ? 'read'",
+			ExpectedSQL:       "((group_acl -> 'allUsers') ? 'read')",
 			VariableConverter: defConverts(),
 		},
 		{
@@ -112,7 +126,7 @@ func TestRegoQueries(t *testing.T) {
 			Queries: []string{
 				`"read" in input.object.acl_group_list[input.object.org_owner]`,
 			},
-			ExpectedSQL:       "group_acl->organization_id :: text ? 'read'",
+			ExpectedSQL:       "((group_acl -> organization_id) ? 'read')",
 			VariableConverter: defConverts(),
 		},
 		{
@@ -120,7 +134,7 @@ func TestRegoQueries(t *testing.T) {
 			Queries: []string{
 				`input.object.org_owner in {"a", "b", "c"}`,
 			},
-			ExpectedSQL:       "organization_id = ANY(ARRAY['a', 'b', 'c'])",
+			ExpectedSQL:       "(organization_id = ANY(ARRAY['a', 'b', 'c']))",
 			VariableConverter: defConverts(),
 		},
 		{
@@ -143,11 +157,11 @@ func TestRegoQueries(t *testing.T) {
 				`"read" in input.object.acl_group_list.allUsers`,
 				`"read" in input.object.acl_user_list.me`,
 			},
-			ExpectedSQL: `(organization_id :: text != '' OR ` +
-				`organization_id :: text = ANY(ARRAY ['a','b','c']) OR ` +
-				`organization_id :: text != '' OR ` +
-				`group_acl->'allUsers' ? 'read' OR ` +
-				`user_acl->'me' ? 'read')`,
+			ExpectedSQL: `(organization_id <> '') OR ` +
+				`(organization_id = ANY(ARRAY['a', 'b', 'c'])) OR ` +
+				`(organization_id <> '') OR ` +
+				`((group_acl -> 'allUsers') ? 'read') OR ` +
+				`((user_acl -> 'me') ? 'read')`,
 			VariableConverter: defConverts(),
 		},
 		{
@@ -155,8 +169,8 @@ func TestRegoQueries(t *testing.T) {
 			Queries: []string{
 				`"read" in input.object.acl_group_list[input.object.org_owner]`,
 			},
-			ExpectedSQL: "false",
-			//VariableConverter: go_rego.NoACLConverter(),
+			ExpectedSQL:       "false",
+			VariableConverter: noACLs(),
 		},
 	}
 
@@ -168,6 +182,7 @@ func TestRegoQueries(t *testing.T) {
 
 			cfg := rego2sql.ConvertConfig{
 				VariableConverter: tc.VariableConverter,
+				UnknownVarsFalse:  tc.UnknownVarsFalse,
 			}
 
 			requireConvert(t, convertTestCase{
@@ -208,6 +223,7 @@ func requireConvert(t *testing.T, tc convertTestCase) {
 
 		gen, err := rego2sql.Serialize(sqlNode)
 		require.NoError(t, err, "serialize")
+
 		require.Equal(t, tc.expectSQL, gen, "sql match")
 	}
 }
