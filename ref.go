@@ -1,12 +1,15 @@
-package sqlast
+package rego2sql
 
 import (
 	"fmt"
-	"github.com/open-policy-agent/opa/ast"
+
+	"github.com/open-policy-agent/opa/v1/ast"
+	pg_query "github.com/pganalyze/pg_query_go/v6"
+	"github.com/zclconf/go-cty/cty"
 )
 
 type VariableMatcher interface {
-	ConvertVariable(rego ast.Ref) (Node, bool)
+	ConvertVariable(rego ast.Ref) (*Item, bool)
 }
 
 type VariableConverter struct {
@@ -23,7 +26,7 @@ func (vc *VariableConverter) RegisterMatcher(m ...VariableMatcher) *VariableConv
 	return vc
 }
 
-func (vc *VariableConverter) ConvertVariable(rego ast.Ref) (Node, bool) {
+func (vc *VariableConverter) ConvertVariable(rego ast.Ref) (*Item, bool) {
 	for _, c := range vc.converters {
 		if n, ok := c.ConvertVariable(rego); ok {
 			return n, true
@@ -63,46 +66,36 @@ func RegoVarPath(path []string, terms []*ast.Term) ([]*ast.Term, error) {
 	return terms[len(path):], nil
 }
 
-var _ VariableMatcher = astStringVar{}
-var _ Node = astStringVar{}
-
 // astStringVar is any variable that represents a string.
 type astStringVar struct {
-	Source       RegoSource
 	FieldPath    []string
-	ColumnString string
+	ColumnString []string
+	Typ          cty.Type
 }
 
-func StringVarMatcher(sqlString string, regoPath []string) VariableMatcher {
-	return astStringVar{FieldPath: regoPath, ColumnString: sqlString}
+func StringVarMatcher(regoPath []string, columnRef []string, typ cty.Type) VariableMatcher {
+	return astStringVar{
+		FieldPath:    regoPath,
+		ColumnString: columnRef,
+		Typ:          typ,
+	}
 }
-
-func (astStringVar) UseAs() Node { return AstString{} }
 
 // ConvertVariable will return a new astStringVar Node if the given rego Ref
 // matches this astStringVar.
-func (s astStringVar) ConvertVariable(rego ast.Ref) (Node, bool) {
+func (s astStringVar) ConvertVariable(rego ast.Ref) (*Item, bool) {
 	left, err := RegoVarPath(s.FieldPath, rego)
 	if err == nil && len(left) == 0 {
-		return astStringVar{
-			Source:       RegoSource(rego.String()),
-			FieldPath:    s.FieldPath,
-			ColumnString: s.ColumnString,
+		fields := make([]*pg_query.Node, 0, len(s.ColumnString))
+		for _, p := range s.ColumnString {
+			fields = append(fields, pg_query.MakeStrNode(p))
+		}
+
+		return &Item{
+			Node: pg_query.MakeColumnRefNode(fields, 0),
+			Type: s.Typ,
 		}, true
 	}
 
 	return nil, false
-}
-
-func (s astStringVar) SQLString(cfg *SQLGenerator) string {
-	return s.ColumnString
-}
-
-func (s astStringVar) EqualsSQLString(cfg *SQLGenerator, not bool, other Node) (string, error) {
-	switch other.UseAs().(type) {
-	case AstString, astStringVar:
-		return basicSQLEquality(cfg, not, s, other), nil
-	}
-
-	return "", fmt.Errorf("unsupported equality: %T %s %T", s, equalsOp(not), other)
 }
